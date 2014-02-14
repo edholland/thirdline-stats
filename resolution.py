@@ -1,13 +1,8 @@
-
 #!/usr/bin/env python
 from jira.config import get_jira
 import dateutil.parser as dp
 import datetime as dt
-import time
 import numpy as np
-import pickle
-import itertools
-
 from flask import Flask
 app = Flask(__name__)
 
