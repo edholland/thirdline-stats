@@ -15,6 +15,7 @@ PERIOD = 28
 
 class gw_jira:
     def __init__(self):
+        """Get jira connection, list of components and issues"""
         # Use config.ini, section = jira to provide server details
         # must contain user, pass, and server settings
         self.jira = get_jira(profile='jira')
@@ -24,52 +25,72 @@ class gw_jira:
 
     # Methods for calculating age of issues
     def days_old(self, issue):
+        """Returns number of days since issue creation"""
         return (dt.datetime.now() - dp.parse(issue.fields.created, ignoretz=True)).days
     def hours_res(self, issue):
+        """Returns number of hours since issue resolution"""
         return (dp.parse(issue.fields.customfield_10504) - dp.parse(issue.fields.created, ignoretz=True)).total_seconds()/(60*60)
 
     # Methods for filtering issues
     def filter_between(self, i, offset, period=PERIOD):
+        """Filter issues where creation time between two days"""
         return (self.days_old(i) > offset and self.days_old(i) < period+offset)
     
     # Methods for extracting types of issues
     def get_comp(self):
+        """Returns issues matching where component = self.co"""
         return [ i for i in self.issues if i.fields.components[0].name in self.co ]
     def get_open(self):
+        """Returns currently open issues"""
         return [ i for i in self.get_comp() if not i.fields.customfield_10504 ]
     def get_resolved(self):
+        """Returns currently resolved issues"""
         return [ i for i in self.get_comp() if i.fields.customfield_10504 ]
     def get_prev_resolved(self, offset):
+        """Returns issue resolved in a PERIOD offset days ago"""
         return [ i for i in self.get_comp() if i.fields.customfield_10504 and self.filter_between(i, offset)]
     def get_new(self):
+        """Returns recently created issues"""
         return [ i for i in self.get_comp() if self.filter_between(i, 0)]
 
     # Methods for calculating stats from lists of issues
     def percentile(self, list):
+        """Calculate percentile of resolution times from a list of resolved issues"""
         if len(list):
             return np.percentile([ round(self.hours_res(i), 1) for i in list ], PERCENTILE)
         return '-'
 
     # Methods for outputting results
     def format_line_html(self):
-        output = ['<tr>']
-        results = [self.co, len(self.get_open()), len(self.get_prev_resolved(0)), self.percentile(self.get_prev_resolved(0)), self.percentile(self.get_resolved()), len(self.get_new()), len(self.get_comp())]
-        compare = ['', THRESHOLD_OPEN, len(self.get_prev_resolved(PERIOD)), self.percentile(self.get_resolved()),THRESHOLD_AGE, THRESHOLD_NEW, 1]
-        output.append( self.table_cell(results[0]) ) # Headers
-        output.append( self.table_cell(results[1], (results[1] > compare[1]) ) ) # Open
-        output.append( self.table_cell(results[2], ((results[2] < compare[2]) and (results[2] > results[4])) ) ) # Resolved
-        output.append( self.table_cell(results[3], ( ((results[3] > compare[3]) or (results[3] > compare[4])) and (results[3] != '-') ) ) ) # Percentile - Current
-        output.append( self.table_cell(results[4], ((results[4] > compare[4]) and (results[4] != '-')) ) ) # Percentile - All time
-        output.append( self.table_cell(results[5], (results[5] > compare[5]) ) ) # New
-        output.append( self.table_cell(results[6], 0 ) ) # All
+        """Return one component row in HTML"""
+        # Dimensions of results and alert _must_ match and defines the columns of the table generated
+        results = [self.co, # Name
+                   len(self.get_open()), # Open 
+                   len(self.get_prev_resolved(0)), # Resolved 
+                   self.percentile(self.get_prev_resolved(0)), # Current Percentile 
+                   self.percentile(self.get_resolved()), # Historic Percentile
+                   len(self.get_new()), # Recent issues
+                   len(self.get_comp()) # All issues
+                   ]
+        # Sets colour of table bg. (None for black. True for red. False for green)
+        alert = [None,
+                 results[1] > THRESHOLD_OPEN,
+                 results[2] < len(self.get_prev_resolved(PERIOD)) and results[2] > results[4],
+                 (results[3] > results[4] or results[3] > THRESHOLD_AGE) and results[3] != '-',
+                 results[4] > THRESHOLD_AGE and results[4] != '-',
+                 results[5] > THRESHOLD_NEW,
+                 False
+                 ]
+        lines = zip(results, alert)
+        output = [ self.table_cell(x, y) for (x,y) in lines ]
         output.append('</tr>')
-        return ' '.join(output)
+        return '<tr>' + ' '.join(output)
 
-    def table_cell(self, value, func=None):
+    def table_cell(self, value, alert):
         ret = "<td align='center'"
-        if func == 0:
+        if alert == False:
             ret += " style='background-color:%s'> %s" % ('Green', value)
-        elif func == 1:
+        elif alert == True:
             ret += " style='background-color:%s'> %s" % ('Red', value)
         else:
             ret += ">%s" % value
